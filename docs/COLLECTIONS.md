@@ -132,7 +132,7 @@ all  >  hierarchy  >  own
 
 **Where it applies:** pass `options` to `getPermissionAccess` for read filters, or `mode: "modify"` for per-document `update` / `delete`. Plain `getPermissionAccess` without `options` checks permission only — no row filter. On `update` / `delete`, `collectionSlug` defaults to `featureCode` when omitted.
 
-**App collections with `dataScope`:** store creator’s user **id** in `createdBy` (`text` default; `relationship` only for Admin UI) + create hook + `getPermissionAccess`. Details, examples, and `getCreatedByRelationshipField` → **[UTILS](https://github.com/zealamic/payload-plugin-rbac/blob/main/docs/UTILS.md#ownership-field-required-for-data-scope)**. Relationship demo: `dev/collections/posts.ts`.
+**App collections with `dataScope`:** use `targetCollections` for a quick hidden ownership field + create hook, or add fields manually — **[targetCollections](#targetcollections)** · **[UTILS — Ownership field](https://github.com/zealamic/payload-plugin-rbac/blob/main/docs/UTILS.md#ownership-field-required-for-data-scope)**. Relationship demo: `dev/collections/posts.ts`.
 
 **Users collection:** the plugin uses `createdByField: "id"` (each user document is “owned” by itself) and adds `parent` / `parentPath` for hierarchy. Do not substitute `username`, `code`, or other fields for `id` on users access — see [Users collection — warning](#users-collection).
 
@@ -218,12 +218,113 @@ await payload.update({
 
 ---
 
+---
+
+## `targetCollections`
+
+The fastest way to prepare app collections for **data scope**. List collection slugs in plugin config — the plugin augments each matching collection with:
+
+1. A **hidden ownership field** (default: `createdBy` as `text`)
+2. A **create hook** that sets the field to `req.user.id` on create
+
+You still wire `getPermissionAccess` on the collection yourself. The plugin does **not** add access handlers to `targetCollections`.
+
+### Basic usage
+
+```ts
+payloadPluginRBAC({
+  targetCollections: ["posts", "comments"],
+});
+```
+
+Each listed collection gets hidden `createdBy` (`text`) + `createCreatedByOnCreateBeforeChangeHook()`. Existing fields or hooks with the same name are left unchanged.
+
+### Advanced options
+
+`targetCollections` accepts strings or objects:
+
+```ts
+import type { TargetCollection } from "@zealamic/payload-plugin-rbac";
+
+const targets: TargetCollection[] = [
+  "posts", // default: createdBy (text)
+  {
+    slug: "articles",
+    createdByFieldName: "author", // custom field name
+  },
+  {
+    slug: "media",
+    createdByFieldName: "createdBy",
+    isRelatedWithUsersCollection: true, // hidden relationship → config.admin.user
+  },
+];
+
+payloadPluginRBAC({ targetCollections: targets });
+```
+
+| Property | Default | Effect |
+| -------- | ------- | ------ |
+| `slug` | — | Collection slug to augment (required) |
+| `createdByFieldName` | `"createdBy"` | Ownership field name — must match `options.createdByField` in `getPermissionAccess` when not `createdBy` |
+| `isRelatedWithUsersCollection` | `false` | When `true`, field is `relationship` to `config.admin.user` instead of `text` |
+
+### Wire access on the collection
+
+```ts
+export const Posts: CollectionConfig = {
+  slug: "posts",
+  access: {
+    create: getPermissionAccess({ featureCode: "posts", actionCode: "create" }),
+    read: getPermissionAccess({ featureCode: "posts", actionCode: "read", options: {} }),
+    update: getPermissionAccess({ featureCode: "posts", actionCode: "update", mode: "modify" }),
+    delete: getPermissionAccess({ featureCode: "posts", actionCode: "delete", mode: "modify" }),
+  },
+  fields: [{ name: "title", type: "text" }],
+};
+```
+
+Custom field name example (`author`):
+
+```ts
+// plugin config
+targetCollections: [{ slug: "articles", createdByFieldName: "author" }],
+
+// collection access — pass createdByField in options
+read: getPermissionAccess({
+  featureCode: "articles",
+  actionCode: "read",
+  options: { createdByField: "author" },
+}),
+```
+
+### Migration required
+
+Adding or changing `targetCollections` changes the database schema. After updating plugin config:
+
+```bash
+yarn payload migrate:create
+yarn payload migrate
+```
+
+### When to use manual setup instead
+
+Use **[UTILS — Ownership field](https://github.com/zealamic/payload-plugin-rbac/blob/main/docs/UTILS.md#ownership-field-required-for-data-scope)** when you need:
+
+- A **visible** ownership field in Admin (read-only `relationship`, sidebar position, etc.)
+- Fields nested inside tabs/groups with custom layout
+- Full control over field type, labels, and validation
+
+`targetCollections` fields are **hidden** by default (same as `getCreatedByRelationshipField()` with no params).
+
+---
+
 ## Plugin config shape
 
 ```ts
 payloadPluginRBAC({
   autoModifyUsersCollection?: boolean; // default true
   disabled?: boolean;
+  targetCollections?: string[] | TargetCollection[];
   translations?: RBACTranslations;
   components?: {
     rolePermissionMatrixField?: string; // import map path to custom Field component
@@ -498,20 +599,23 @@ You must add `roles`, `isSuperAdmin`, `parent` / `parentPath` (if using hierarch
 
 ### 10. Wire data scope on an app collection
 
-See [UTILS — Ownership field](https://github.com/zealamic/payload-plugin-rbac/blob/main/docs/UTILS.md#ownership-field-required-for-data-scope) and `dev/collections/posts.ts`.
+**Quick path:** `targetCollections` — see [targetCollections](#targetcollections).
+
+**Manual path:** [UTILS — Ownership field](https://github.com/zealamic/payload-plugin-rbac/blob/main/docs/UTILS.md#ownership-field-required-for-data-scope) and `dev/collections/posts.ts`.
 
 ---
 
 ## Quick setup checklist
 
-1. Register the plugin in `payload.config.ts`
-2. Seed **permission-features** (`users`, `posts`, …) — use **Reorder** on the list to set feature row order
-3. Seed **permission-actions** (`create`, `read`, `update`, `delete`, …) — use **Reorder** to set main/sub column order
-4. Create **permissions** (one row per feature + action pair)
-5. Create **roles**, configure the matrix on the **update** screen, and Save
-6. Assign **roles** to users
-7. Bootstrap a **super admin** (seed / DB)
-8. App collections with `dataScope` → [UTILS](https://github.com/zealamic/payload-plugin-rbac/blob/main/docs/UTILS.md#ownership-field-required-for-data-scope)
+1. Register the plugin in `payload.config.ts` (add `targetCollections` for app collections that need data scope)
+2. Run **`yarn payload migrate:create`** then **`yarn payload migrate`** when `targetCollections` changes
+3. Seed **permission-features** (`users`, `posts`, …) — use **Reorder** on the list to set feature row order
+4. Seed **permission-actions** (`create`, `read`, `update`, `delete`, …) — use **Reorder** to set main/sub column order
+5. Create **permissions** (one row per feature + action pair)
+6. Create **roles**, configure the matrix on the **update** screen, and Save
+7. Assign **roles** to users
+8. Bootstrap a **super admin** (seed / DB)
+9. Wire `getPermissionAccess` on app collections — ownership field via `targetCollections` or [UTILS](https://github.com/zealamic/payload-plugin-rbac/blob/main/docs/UTILS.md#ownership-field-required-for-data-scope)
 
 ---
 
@@ -543,6 +647,7 @@ hooks: {
 
 | Goal                       | Use                                                                                                             |
 | -------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| Quick ownership field + hook | `targetCollections` → [targetCollections](#targetcollections)                                                 |
 | Translate labels           | `translations` → [TRANSLATIONS](https://github.com/zealamic/payload-plugin-rbac/blob/main/docs/TRANSLATIONS.md) |
 | Reorder drawer copy        | `translations.components.permissionActionReorder` / `permissionFeatureReorder`                                  |
 | Ownership field (app CRUD) | [UTILS — Ownership field](https://github.com/zealamic/payload-plugin-rbac/blob/main/docs/UTILS.md#ownership-field-required-for-data-scope) |

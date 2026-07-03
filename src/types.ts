@@ -47,6 +47,13 @@ export type RBACTranslations = {
   };
 };
 
+export type TargetCollection = {
+  slug: string;
+  createdByFieldName?: string;
+  /** Use a relationship field to the resolved users collection instead of a text field. */
+  isRelatedWithUsersCollection?: boolean;
+};
+
 export type PayloadPluginRBACConfig = {
   /**
    * Collection slugs to augment (may include plugin-only collections absent from generated `CollectionSlug`).
@@ -76,4 +83,10 @@ export type PayloadPluginRBACConfig = {
   components?: {
     rolePermissionMatrixField?: string;
   };
+  /**
+   * App collections that receive an ownership field + create hook automatically.
+   * Use `createdByFieldName` when the field is not `createdBy` (e.g. `author`).
+   * Set `isRelatedWithUsersCollection` to create a relationship to `config.admin.user`.
+   */
+  targetCollections?: string[] | TargetCollection[];
 };

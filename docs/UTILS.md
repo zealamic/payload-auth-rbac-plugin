@@ -5,7 +5,11 @@ Utilities exported from the plugin for access control, field merging, IDs, and t
 **Import from either:**
 
 ```ts
-import { getPermissionAccess, CONSTANTS, createdByOnCreateBeforeChangeHook } from "@zealamic/payload-plugin-rbac";
+import {
+  createCreatedByOnCreateBeforeChangeHook,
+  getPermissionAccess,
+  CONSTANTS,
+} from "@zealamic/payload-plugin-rbac";
 // or
 import { getPermissionAccess } from "@zealamic/payload-plugin-rbac/utils";
 ```
@@ -19,7 +23,7 @@ Both resolve to the same barrel: `src/lib/utils/index.ts`.
 | Module         | File                            | Purpose                                     |
 | -------------- | ------------------------------- | ------------------------------------------- |
 | `access`       | `src/lib/utils/access.ts`       | RBAC + data-scope access helpers and types  |
-| `collections`  | `src/lib/utils/collections.ts`  | Users slug resolution, `getCreatedByRelationshipField`, list UI merge |
+| `collections`  | `src/lib/utils/collections.ts`  | Users slug resolution, `getCreatedByRelationshipField`, `targetCollections` augmentation |
 | `data`         | `src/lib/utils/data.ts`         | ID normalization                            |
 | `fields`       | `src/lib/utils/fields.ts`       | Plugin field merge for collection overrides |
 | `hooks`        | `src/lib/utils/hooks.ts`        | Reusable collection hooks (`createdBy` on create) |
@@ -71,7 +75,32 @@ RBAC only needs the **user document id** on each record. **`text`** + `req.user.
 
 `options.usersCollectionSlug` is for **hierarchy** lookups only — it does not require `createdBy` to be a relationship.
 
-**Setup:** (1) ownership field (`createdBy` or custom name), (2) create hook (`createdByOnCreateBeforeChangeHook` or custom), (3) `getPermissionAccess` with `options` on `read` / `update` / `delete`.
+##### Quick setup — `targetCollections` (recommended)
+
+For standard app collections, list slugs in plugin config instead of adding fields/hooks by hand:
+
+```ts
+payloadPluginRBAC({
+  targetCollections: ["posts"],
+});
+```
+
+The plugin adds a hidden ownership field + create hook. You only wire `getPermissionAccess` on the collection. After adding or changing slugs, run:
+
+```bash
+yarn payload migrate:create
+yarn payload migrate
+```
+
+Options (`createdByFieldName`, `isRelatedWithUsersCollection`) → **[COLLECTIONS — targetCollections](https://github.com/zealamic/payload-plugin-rbac/blob/main/docs/COLLECTIONS.md#targetcollections)**.
+
+##### Manual setup
+
+Use when you need a **visible** field in Admin, custom layout, or full control over the field definition:
+
+1. Ownership field (`createdBy` or custom name) — see [`getCreatedByRelationshipField`](#getcreatedbyrelationshipfieldparams) or inline field
+2. Create hook — [`createCreatedByOnCreateBeforeChangeHook`](#createcreatedbyoncreatebeforechangehook) or custom
+3. `getPermissionAccess` with `options` on `read` / `update` / `delete`
 
 | Field name | `getPermissionAccess` |
 | ---------- | --------------------- |
@@ -80,9 +109,17 @@ RBAC only needs the **user document id** on each record. **`text`** + `req.user.
 
 **Rules:** no `options` on `create` (permission-only). `collectionSlug` only with `mode: "modify"` when slug ≠ `featureCode`. Users collection uses `createdByField: "id"` — see `src/collections/users/index.ts`.
 
-#### Example — `text` `createdBy` (default)
+#### Example — manual `text` `createdBy`
+
+Use this when **not** using `targetCollections`, or when you want a visible/read-only field in Admin:
 
 ```ts
+import {
+  createCreatedByOnCreateBeforeChangeHook,
+  getCreatedByRelationshipField,
+  getPermissionAccess,
+} from "@zealamic/payload-plugin-rbac";
+
 const FEATURE_CODE = "posts";
 
 export const Posts: CollectionConfig = {
@@ -93,21 +130,31 @@ export const Posts: CollectionConfig = {
     update: getPermissionAccess({ featureCode: FEATURE_CODE, actionCode: "update", mode: "modify" }),
     delete: getPermissionAccess({ featureCode: FEATURE_CODE, actionCode: "delete", mode: "modify" }),
   },
-  fields: [{ name: "createdBy", type: "text", admin: { readOnly: true } }],
-  hooks: { beforeChange: [createdByOnCreateBeforeChangeHook] },
+  fields: [
+    getCreatedByRelationshipField(), // hidden text — or inline visible field below
+    // { name: "createdBy", type: "text", admin: { readOnly: true } },
+  ],
+  hooks: { beforeChange: [createCreatedByOnCreateBeforeChangeHook()] },
 };
 ```
 
-#### Example — `relationship` `createdBy` (optional, Admin UI)
+#### Example — manual `relationship` `createdBy` (visible in Admin)
 
 Same access wiring; use `type: "relationship"` + `relationTo` matching `config.admin.user`. Full demo: `dev/collections/posts.ts`.
 
 #### Example — custom field name (`author`)
 
-When the creator is stored under a different field name, pass `createdByField` in `options` and use a custom create hook:
+When the creator is stored under a different field name, pass `createdByField` in `options` and use `createCreatedByOnCreateBeforeChangeHook("author")`:
 
 ```ts
+import {
+  createCreatedByOnCreateBeforeChangeHook,
+  getCreatedByRelationshipField,
+  getPermissionAccess,
+} from "@zealamic/payload-plugin-rbac";
+
 const FEATURE_CODE = "articles";
+const AUTHOR_FIELD = "author";
 
 export const Articles: CollectionConfig = {
   slug: FEATURE_CODE,
@@ -119,41 +166,33 @@ export const Articles: CollectionConfig = {
     read: getPermissionAccess({
       featureCode: FEATURE_CODE,
       actionCode: "read",
-      options: { createdByField: "author" },
+      options: { createdByField: AUTHOR_FIELD },
     }),
     update: getPermissionAccess({
       featureCode: FEATURE_CODE,
       actionCode: "update",
       mode: "modify",
-      options: { createdByField: "author" },
+      options: { createdByField: AUTHOR_FIELD },
     }),
     delete: getPermissionAccess({
       featureCode: FEATURE_CODE,
       actionCode: "delete",
       mode: "modify",
-      options: { createdByField: "author" },
+      options: { createdByField: AUTHOR_FIELD },
     }),
   },
   fields: [
-    {
-      name: "author",
-      type: "relationship",
-      relationTo: "users",
-      admin: { readOnly: true },
-    },
+    getCreatedByRelationshipField({ createdByFieldName: AUTHOR_FIELD }),
+    // Or visible relationship:
+    // { name: "author", type: "relationship", relationTo: "users", admin: { readOnly: true } },
   ],
   hooks: {
-    beforeChange: [
-      ({ req, data, operation }) => {
-        if (operation === "create" && req.user?.id && !data?.author) {
-          return { ...data, author: req.user.id };
-        }
-        return data;
-      },
-    ],
+    beforeChange: [createCreatedByOnCreateBeforeChangeHook(AUTHOR_FIELD)],
   },
 };
 ```
+
+Or use `targetCollections: [{ slug: "articles", createdByFieldName: "author" }]` and skip field/hook in the collection file.
 
 #### How each mode behaves at runtime
 
@@ -325,28 +364,40 @@ getCreatedByRelationshipField(params?: {
 
 | Param | Default | Effect |
 | ----- | ------- | ------ |
-| `createdByFieldName` | `"createdBy"` | Field `name`. Custom names need a custom create hook (`createdByOnCreateBeforeChangeHook` only sets `createdBy`). |
+| `createdByFieldName` | `"createdBy"` | Field `name`. Pair with `createCreatedByOnCreateBeforeChangeHook(createdByFieldName)`. |
 | `usersCollectionSlug` | — (→ `text`) | When set: `type: "relationship"`, `relationTo: slug`, `admin.hidden: true`. When omitted: `type: "text"`, `admin.hidden: true`. |
 
-**Examples:**
+**Examples (manual setup):**
 
 ```ts
-// Plugin default — hidden text (permission-actions, roles, users, …)
+// Hidden text (same as targetCollections default)
 fields: [getCreatedByRelationshipField()],
-hooks: { beforeChange: [createdByOnCreateBeforeChangeHook] },
+hooks: { beforeChange: [createCreatedByOnCreateBeforeChangeHook()] },
 
-// Hidden relationship (uncommon — only if you need relationTo on a hidden field)
+// Hidden relationship to auth users collection
 fields: [
   getCreatedByRelationshipField({
     usersCollectionSlug: resolveUsersCollectionSlug(config.admin?.user),
   }),
 ],
+hooks: { beforeChange: [createCreatedByOnCreateBeforeChangeHook()] },
 
-// Custom name — hidden text + custom hook + createdByField in options
+// Custom field name
 fields: [getCreatedByRelationshipField({ createdByFieldName: "author" })],
+hooks: { beforeChange: [createCreatedByOnCreateBeforeChangeHook("author")] },
 ```
 
-For **visible** fields in Admin, define inline (see examples above). `options.usersCollectionSlug` on `getPermissionAccess` is separate — hierarchy only.
+For **visible** fields in Admin, define inline (see `dev/collections/posts.ts`). `options.usersCollectionSlug` on `getPermissionAccess` is separate — hierarchy only.
+
+Equivalent plugin config for hidden fields:
+
+```ts
+targetCollections: [
+  "posts",
+  { slug: "articles", createdByFieldName: "author" },
+  { slug: "media", isRelatedWithUsersCollection: true },
+],
+```
 
 ### `mergeBeforeListTable(pluginComponent, consumerComponents?)`
 
@@ -356,9 +407,22 @@ Prepends a plugin list component before consumer `beforeListTable` entries. Used
 
 ## Hooks exports
 
+### `createCreatedByOnCreateBeforeChangeHook(createdByFieldName?)`
+
+Factory that returns a `beforeChange` hook. Sets the ownership field to `req.user.id` on **create** (works with `text` or `relationship`). No-op when `req.user` is missing or the field is already set.
+
+```ts
+createCreatedByOnCreateBeforeChangeHook(); // default field: "createdBy"
+createCreatedByOnCreateBeforeChangeHook("author");
+```
+
 ### `createdByOnCreateBeforeChangeHook`
 
-Sets `createdBy` to `req.user.id` on **create** (works with `text` or `relationship`). No-op when `req.user` is missing or `createdBy` is already set. For other field names (`author`, …), use a custom hook — see [Example — custom field name](#example--custom-field-name-author).
+Default export: `createCreatedByOnCreateBeforeChangeHook()` — sets `createdBy` only.
+
+### `hasCreatedByOnCreateBeforeChangeHook(hooks, createdByFieldName?)`
+
+Returns whether the hook list already includes the factory hook for the given field name. Used internally by `targetCollections` augmentation.
 
 ---
 
@@ -414,8 +478,9 @@ CONSTANTS.GENERAL.RBAC_PREFIX;
 
 | Task                              | Helper / pattern                                               |
 | --------------------------------- | -------------------------------------------------------------- |
+| Quick ownership field + hook      | `targetCollections` in plugin config → [COLLECTIONS](https://github.com/zealamic/payload-plugin-rbac/blob/main/docs/COLLECTIONS.md#targetcollections) |
 | Collection CRUD access            | `getPermissionAccess` — see table above per operation          |
-| Ownership field | `text` `createdBy` + hook, or [`getCreatedByRelationshipField()`](#getcreatedbyrelationshipfieldparams) for hidden fields |
+| Manual ownership field            | `getCreatedByRelationshipField()` + `createCreatedByOnCreateBeforeChangeHook()` |
 | Auth users slug                   | `resolveUsersCollectionSlug(config.admin?.user)`                                                                 |
 | RBAC collections (admin only)     | `getSuperAdminAccess`                                          |
 | Custom row-level read filter      | `getPermissionAccess` + `options` on `read`                      |
