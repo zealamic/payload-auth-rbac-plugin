@@ -16,6 +16,7 @@ import { permissionFeatureReorderClientDefaultTranslations } from "./components/
 import { rolePermissionMatrixClientDefaultTranslations } from "./components/role-permission-matrix-client/default-data.js";
 
 import {
+  augmentCollectionsWithCreatedBy,
   getAllTranslationsOfSpecificObject,
   getMergedTranslations,
   resolveUsersCollectionSlug,
@@ -45,6 +46,8 @@ export const payloadPluginRBAC =
     if (!pluginOptions.translations) {
       pluginOptions.translations = {};
     }
+
+    const targetCollections = pluginOptions.targetCollections || [];
 
     const usersCollectionSlug = resolveUsersCollectionSlug(config.admin?.user);
 
@@ -129,6 +132,14 @@ export const payloadPluginRBAC =
           }),
         }),
       })(config);
+    }
+
+    if (targetCollections.length > 0) {
+      config.collections = augmentCollectionsWithCreatedBy(
+        config.collections ?? [],
+        targetCollections,
+        { usersCollectionSlug },
+      );
     }
 
     /**
